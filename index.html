@@ -187,6 +187,16 @@
     .price-before { color: #888; text-decoration: line-through; }
     .price-after { color: #b91c1c; font-weight: bold; font-size: 21px; }
     .size { color: #4a0070; font-weight: bold; }
+    .product-details {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1fr);
+        align-items: center;
+        gap: 6px;
+        direction: rtl;
+        color: #4a0070;
+        font-weight: bold;
+    }
+    .result-card .product-details p { overflow-wrap: anywhere; }
     .not-found {
         color: #b91c1c;
         font-weight: bold;
@@ -644,7 +654,7 @@ async function loadAllData(forceRefresh) {
     LOAD_FAILED = [];
 
     const catNames = Object.keys(CATALOG);
-    totalRequests = catNames.length + 1; // +1 لمصدر الحالة
+    totalRequests = catNames.length + 2; // مصدر الحالة + موقع المخزن من شيت الإكسسوارات الأصلي
     completedRequests = 0;
     document.getElementById('loadingSub').textContent = '0 / ' + totalRequests;
     document.getElementById('loadingBarFill').style.width = '0%';
@@ -688,7 +698,31 @@ async function loadAllData(forceRefresh) {
             updateProgress();
         });
 
-    await Promise.all(catPromises.concat([statusPromise]));
+    const warehouseLocations = {};
+    const warehousePromise = fetchBatch('1Lw1zwF_SvZuOQWtu39ixArrKX8tMpXM7QAIOHEWqpBs', [
+        "'Form responses 3'!A1:A10000", "'Form responses 3'!U1:U10000"
+    ]).then(function(batchData) {
+        const ranges = batchData.valueRanges;
+        if (!ranges || ranges.length < 2) throw new Error('Missing warehouse data');
+        const seqs = ranges[0].values || [];
+        const locations = ranges[1].values || [];
+        for (let i = 1; i < seqs.length; i++) {
+            const seq = String((seqs[i] || [])[0] == null ? '' : seqs[i][0]).trim();
+            if (!seq) continue;
+            const value = (locations[i] || [])[0];
+            warehouseLocations[seq] = String(value == null ? '' : value).trim();
+        }
+        updateProgress();
+    }).catch(function(err) {
+        console.error('فشل تحميل مواقع المخزن', err);
+        LOAD_FAILED.push({ name: 'مواقع مخزن الإكسسوارات', group: 'warehouse' });
+        updateProgress();
+    });
+
+    await Promise.all(catPromises.concat([statusPromise, warehousePromise]));
+    Object.keys(ACCESSORIES_INDEX).forEach(function(seq) {
+        ACCESSORIES_INDEX[seq].warehouseLocation = warehouseLocations[seq] || '';
+    });
 
     finalizeSizeText(GOODS_INDEX);
     finalizeSizeText(ACCESSORIES_INDEX);
@@ -765,7 +799,11 @@ function renderResult(container, seq, group) {
         priceHtml = '<p class="price-before">قبل التخفيض: ' + (entry.priceBefore || '-') + ' دينار</p>' +
                     '<p class="price-after">بعد التخفيض: ' + (entry.priceAfter || '-') + ' دينار</p>';
     }
-    const sizeHtml = entry.sizeText ? '<p class="size">القياس: ' + entry.sizeText + '</p>' : '';
+    const sizeHtml = '<div class="product-details">' +
+        '<p>التسلسل: <bdi>' + escHtml(seq) + '</bdi></p>' +
+        '<p class="size">' + (entry.sizeText ? 'القياس: ' + escHtml(entry.sizeText) : '') + '</p>' +
+        '<p>' + (group === 'accessories' ? 'المخزن: <bdi>' + escHtml(entry.warehouseLocation || '-') + '</bdi>' : '') + '</p>' +
+        '</div>';
     const statusHtml = result.status === 'قيد الاستلام'
         ? '<div class="status-badge">🔴 قيد الاستلام - لم يصل بعد</div>' : '';
 
